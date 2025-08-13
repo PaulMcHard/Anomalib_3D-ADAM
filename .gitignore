@@ -1,0 +1,13 @@
+#Directories
+datasets/
+pre_trained/
+__pycache__/
+json/ 
+results/
+runs/
+scores/
+
+#Files
+*.json
+*.pyc
+todo.md
