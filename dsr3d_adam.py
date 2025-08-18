@@ -1,9 +1,17 @@
 import os
 import json
+import argparse
 from datetime import datetime
 from anomalib.engine import Engine
 from models.dsr3d import Dsr3d
 from adam3d.adam_3d_datamodule import ADAM3D
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Run anomalib training and testing on 3D ADAM dataset")
+    parser.add_argument('dataset_dir', type=str, required=True, help="Base directory path for the dataset", default="D:\\Data\\3d-adam-tests\\adam3d_unsupervised")
+    parser.add_argument('-l', '--log_file_path', type=str, required=True, help="Path to the log file for saving results", default="scores\\padim_adam3D_test_results.json")
+    return parser.parse_args()
 
 def run_anomalib(dataset_base_dir: str, log_file_path: str):
 
@@ -54,6 +62,9 @@ def run_anomalib(dataset_base_dir: str, log_file_path: str):
     print(f"\nAll categories processed. Results written to {log_file_path}")
 
 if __name__ == '__main__':
-    dataset_base_dir = "D:\\Data\\3d-adam-tests\\adam3d_unsupervised"  # Adjust this path as needed
-    log_file_path= "scores\\cfa_adam3D_test_results.json"
+    #dataset_base_dir = "D:\\Data\\3d-adam-tests\\adam3d_unsupervised"  # Adjust this path as needed
+    #log_file_path= "scores\\padim_adam3D_test_results.json"
+    args = parse_arguments()
+    dataset_base_dir = args.dataset_dir
+    log_file_path = args.log_file_path
     run_anomalib(dataset_base_dir, log_file_path)
