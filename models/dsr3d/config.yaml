@@ -1,0 +1,72 @@
+dataset:
+  name: mvtec3d
+  format: mvtec3d
+  path: ./datasets/MVTec3D
+  category: bagel
+  task: segmentation
+  image_size: [256, 256]
+  train_batch_size: 16
+  eval_batch_size: 16
+  num_workers: 8
+  transform_config:
+    train: null
+    eval: null
+
+model:
+  name: dsr_3d
+  # 3DSR Architecture Parameters
+  rgb_channels: 3
+  depth_channels: 1
+  use_depth_only: false  # Set to true for depth-only mode
+  
+  # VQ-VAE Parameters (matching 3DSR architecture)
+  num_hiddens: 128
+  num_residual_layers: 2
+  num_residual_hiddens: 32
+  num_embeddings: 512
+  embedding_dim: 64
+  commitment_cost: 0.25
+  decay: 0.99
+  
+  # 3DSR Specific Parameters
+  latent_anomaly_strength: 0.2
+  upsampling_train_ratio: 0.7
+  pretrained_vq_model_path: "./checkpoints/DADA_RGB_D.pckl"  # or DADA_D.pckl for depth-only
+  
+  # Training Phase Management
+  training_phase: 1  # 1: VQ+reconstruction, 2: anomaly detection, 3: upsampling
+
+metrics:
+  image:
+    - F1Score
+    - AUROC
+  pixel:
+    - F1Score
+    - AUROC
+
+trainer:
+  accelerator: auto
+  devices: 1
+  max_epochs: 120
+  val_check_interval: 1.0
+  num_sanity_val_steps: 0
+  log_every_n_steps: 50
+
+optimization:
+  lr: 0.0002
+  weight_decay: 0.0001
+
+logging:
+  logger: []
+  log_graph: false
+
+visualization:
+  show_images: false
+  save_images: true
+  log_images: false
+  image_save_path: null
+  mode: full
+
+project:
+  logger: false
+  path: ./results
