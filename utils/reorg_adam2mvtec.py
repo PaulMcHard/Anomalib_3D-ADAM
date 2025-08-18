@@ -3,7 +3,7 @@
 Script to reorganize Adam dataset structure to match MVTec 3D AD structure.
 
 Usage:
-    python reorganize_dataset.py /path/to/adam/dataset /path/to/output/mvtec --dry-run --verbose
+    python reorganize_dataset.py /path/to/adam/dataset /path/to/output/mvtec --dry-run --verbose --create-missing-masks
 """
 
 import os
@@ -14,17 +14,20 @@ import random
 from pathlib import Path
 from collections import defaultdict
 import logging
+import numpy as np
+from PIL import Image
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 class DatasetReorganizer:
-    def __init__(self, source_dir, output_dir, dry_run=False, verbose=False):
+    def __init__(self, source_dir, output_dir, dry_run=False, verbose=False, create_missing_masks=False):
         self.source_dir = Path(source_dir)
         self.output_dir = Path(output_dir)
         self.dry_run = dry_run
         self.verbose = verbose
+        self.create_missing_masks = create_missing_masks
         
         # Set logging level based on verbose flag
         if verbose:
@@ -38,7 +41,7 @@ class DatasetReorganizer:
         }
         
         # Valid data types (ignore binary_masks, machine_elements)
-        self.valid_data_types = {'rgb', 'xyz', 'gt'}
+        self.valid_data_types = {'rgb', 'xyz', 'ground_truth'}
         
         # Split ratios
         self.train_ratio = 0.8
@@ -49,6 +52,7 @@ class DatasetReorganizer:
         self.stats = {
             'objects_processed': 0,
             'files_copied': 0,
+            'masks_created': 0,
             'defects_found': defaultdict(int),
             'splits_created': defaultdict(lambda: defaultdict(int))
         }
@@ -131,23 +135,44 @@ class DatasetReorganizer:
         
         return None
     
-    def copy_file(self, src_path, dst_path):
-        """Copy a single file with proper error handling."""
+    def get_image_dimensions(self, image_path):
+        """Get the dimensions (width, height) of an image file."""
+        try:
+            with Image.open(image_path) as img:
+                return img.size  # Returns (width, height)
+        except Exception as e:
+            logger.error(f"Failed to get dimensions for {image_path}: {e}")
+            return None
+    
+    def create_empty_mask(self, width, height, output_path):
+        """Create an empty (all black) single-channel PNG mask."""
         try:
             if self.dry_run:
-                logger.debug(f"[DRY RUN] Would copy: {src_path} -> {dst_path}")
-            else:
-                # Create destination directory if it doesn't exist
-                dst_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src_path, dst_path)
-                logger.debug(f"Copied: {src_path} -> {dst_path}")
+                logger.debug(f"[DRY RUN] Would create empty mask: {output_path} ({width}x{height})")
+                self.stats['masks_created'] += 1
+                return True
             
-            self.stats['files_copied'] += 1
+            # Create empty mask (all zeros, single channel)
+            mask_array = np.zeros((height, width), dtype=np.uint8)
+            
+            # Convert to PIL Image and save as PNG
+            mask_image = Image.fromarray(mask_array, mode='L')  # 'L' for grayscale
+            
+            # Create destination directory if it doesn't exist
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save the mask
+            mask_image.save(output_path)
+            
+            logger.debug(f"Created empty mask: {output_path} ({width}x{height})")
+            self.stats['masks_created'] += 1
             return True
             
         except Exception as e:
-            logger.error(f"Failed to copy {src_path} to {dst_path}: {e}")
+            logger.error(f"Failed to create empty mask {output_path}: {e}")
             return False
+    
+    def copy_file(self, src_path, dst_path):
         """Copy a single file with proper error handling."""
         try:
             if self.dry_run:
@@ -259,15 +284,30 @@ class DatasetReorganizer:
                     else:
                         logger.warning(f"No corresponding XYZ file found for {rgb_file.name}")
                 
-                # Copy corresponding GT file (same name, usually .png)
-                if 'gt' in good_data:
-                    gt_file = self.find_corresponding_file(good_data['gt'], base_filename, ['.png', '.tiff', '.tif'])
-                    if gt_file:
-                        dst_gt_path = (self.output_dir / object_name / split_name / 'good' / 
-                                      'gt' / gt_file.name)
-                        self.copy_file(gt_file, dst_gt_path)
+                # Copy corresponding ground_truth file OR create empty mask
+                if 'ground_truth' in good_data:
+                    ground_truth_file = self.find_corresponding_file(good_data['ground_truth'], base_filename, ['.png', '.tiff', '.tif'])
+                    if ground_truth_file:
+                        dst_ground_truth_path = (self.output_dir / object_name / split_name / 'good' / 
+                                      'ground_truth' / ground_truth_file.name)
+                        self.copy_file(ground_truth_file, dst_ground_truth_path)
                     else:
-                        logger.warning(f"No corresponding GT file found for {rgb_file.name}")
+                        # No corresponding ground truth file found
+                        if self.create_missing_masks:
+                            # Get RGB image dimensions
+                            rgb_dimensions = self.get_image_dimensions(rgb_file)
+                            if rgb_dimensions:
+                                width, height = rgb_dimensions
+                                # Create empty mask with same base filename but .png extension
+                                mask_filename = f"{base_filename}.png"
+                                dst_mask_path = (self.output_dir / object_name / split_name / 'good' / 
+                                               'ground_truth' / mask_filename)
+                                self.create_empty_mask(width, height, dst_mask_path)
+                                logger.info(f"Created empty mask for {rgb_file.name}")
+                            else:
+                                logger.error(f"Could not get dimensions for {rgb_file.name} - cannot create mask")
+                        else:
+                            logger.warning(f"No corresponding ground_truth file found for {rgb_file.name}")
         
         logger.info(f"Split good samples: {len(train_rgb)} train, {len(val_rgb)} val, {len(test_rgb)} test")
     
@@ -303,17 +343,32 @@ class DatasetReorganizer:
                 else:
                     logger.warning(f"No corresponding XYZ file found for {rgb_file.name}")
             
-            # Copy corresponding GT file (same name, usually .png)
-            if 'gt' in defect_data:
-                gt_file = self.find_corresponding_file(defect_data['gt'], base_filename, ['.png', '.tiff', '.tif'])
-                if gt_file:
-                    dst_gt_path = (self.output_dir / object_name / 'test' / defect_name / 
-                                  'gt' / gt_file.name)
-                    self.copy_file(gt_file, dst_gt_path)
+            # Copy corresponding ground_truth file OR create empty mask
+            if 'ground_truth' in defect_data:
+                ground_truth_file = self.find_corresponding_file(defect_data['ground_truth'], base_filename, ['.png', '.tiff', '.tif'])
+                if ground_truth_file:
+                    dst_ground_truth_path = (self.output_dir / object_name / 'test' / defect_name / 
+                                  'ground_truth' / ground_truth_file.name)
+                    self.copy_file(ground_truth_file, dst_ground_truth_path)
                 else:
-                    logger.warning(f"No corresponding GT file found for {rgb_file.name}")
+                    # No corresponding ground truth file found
+                    if self.create_missing_masks:
+                        # Get RGB image dimensions
+                        rgb_dimensions = self.get_image_dimensions(rgb_file)
+                        if rgb_dimensions:
+                            width, height = rgb_dimensions
+                            # Create empty mask with same base filename but .png extension
+                            mask_filename = f"{base_filename}.png"
+                            dst_mask_path = (self.output_dir / object_name / 'test' / defect_name / 
+                                           'ground_truth' / mask_filename)
+                            self.create_empty_mask(width, height, dst_mask_path)
+                            logger.info(f"Created empty mask for {rgb_file.name}")
+                        else:
+                            logger.error(f"Could not get dimensions for {rgb_file.name} - cannot create mask")
+                    else:
+                        logger.warning(f"No corresponding ground_truth file found for {rgb_file.name}")
         
-        total_files = len(rgb_files) * len([dt for dt in ['rgb', 'xyz', 'gt'] if dt in defect_data])
+        total_files = len(rgb_files) * len([dt for dt in ['rgb', 'xyz', 'ground_truth'] if dt in defect_data])
         logger.info(f"Copied up to {total_files} {defect_name} files to test split")
     
     def create_calibration_dirs(self):
@@ -339,6 +394,9 @@ class DatasetReorganizer:
         logger.info(f"Objects processed: {self.stats['objects_processed']}")
         logger.info(f"Files copied: {self.stats['files_copied']}")
         
+        if self.create_missing_masks:
+            logger.info(f"Empty masks created: {self.stats['masks_created']}")
+        
         logger.info("\nDefect types found:")
         for defect, count in sorted(self.stats['defects_found'].items()):
             logger.info(f"  {defect}: {count} directories")
@@ -350,7 +408,7 @@ class DatasetReorganizer:
                 logger.info(f"    {defect}: {count} files")
         
         if self.dry_run:
-            logger.info("\n[DRY RUN] No files were actually copied.")
+            logger.info("\n[DRY RUN] No files were actually copied or created.")
     
     def reorganize(self):
         """Main reorganization function."""
@@ -358,6 +416,7 @@ class DatasetReorganizer:
         logger.info(f"Source: {self.source_dir}")
         logger.info(f"Output: {self.output_dir}")
         logger.info(f"Dry run: {self.dry_run}")
+        logger.info(f"Create missing masks: {self.create_missing_masks}")
         
         # Set random seed for reproducible splits
         random.seed(42)
@@ -398,6 +457,7 @@ def main():
 Examples:
   python reorganize_dataset.py /data/adam /data/mvtec_format
   python reorganize_dataset.py /data/adam /data/mvtec_format --dry-run --verbose
+  python reorganize_dataset.py /data/adam /data/mvtec_format --create-missing-masks
         """
     )
     
@@ -409,6 +469,8 @@ Examples:
                        help='Show what would be done without actually copying files')
     parser.add_argument('--verbose', action='store_true',
                        help='Enable verbose logging')
+    parser.add_argument('--create-missing-masks', action='store_true',
+                       help='Create empty black PNG masks when ground truth files are missing')
     
     args = parser.parse_args()
     
@@ -417,7 +479,8 @@ Examples:
             source_dir=args.source_dir,
             output_dir=args.output_dir,
             dry_run=args.dry_run,
-            verbose=args.verbose
+            verbose=args.verbose,
+            create_missing_masks=args.create_missing_masks
         )
         
         reorganizer.reorganize()
