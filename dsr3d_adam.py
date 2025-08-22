@@ -9,8 +9,8 @@ from adam3d.adam_3d_datamodule import ADAM3D
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Run anomalib training and testing on 3D ADAM dataset")
-    parser.add_argument('dataset_dir', type=str, required=True, help="Base directory path for the dataset", default="D:\\Data\\3d-adam-tests\\adam3d_unsupervised")
-    parser.add_argument('-l', '--log_file_path', type=str, required=True, help="Path to the log file for saving results", default="scores\\padim_adam3D_test_results.json")
+    parser.add_argument('dataset_dir', type=str, help="Base directory path for the dataset", default="D:\\Data\\3d-adam-tests\\adam3d_unsupervised")
+    parser.add_argument('-l', '--log_file_path', type=str, help="Path to the log file for saving results", default="scores\\dsr3d_adam3D_test_results.json")
     return parser.parse_args()
 
 def run_anomalib(dataset_base_dir: str, log_file_path: str):
@@ -38,7 +38,10 @@ def run_anomalib(dataset_base_dir: str, log_file_path: str):
             num_workers=8,
         )
 
-        model = Dsr3d(training_phase=1),
+        model = Dsr3d(
+            #image_size=(1024, 1280),  # Explicitly set in model
+            training_phase=1
+        )
 
         engine = Engine(
             max_epochs = 120

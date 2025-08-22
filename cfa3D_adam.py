@@ -56,5 +56,5 @@ def run_anomalib(dataset_base_dir: str, log_file_path: str):
 
 if __name__ == '__main__':
     dataset_base_dir = "D:\\Data\\3d-adam-tests\\adam3d_unsupervised"  # Adjust this path as needed
-    log_file_path= "scores\\cfa_adam3D_test_results.json"
+    log_file_path= "scores\\3dsr_adam3D_test_results.json"
     run_anomalib(dataset_base_dir, log_file_path)

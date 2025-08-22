@@ -324,21 +324,6 @@ class PreVQBot(nn.Module):
 # DSR Components (for anomaly detection)
 # =============================================
 
-class SubspaceRestrictionNetwork(nn.Module):
-    """Subspace restriction network from DSR."""
-    
-    def __init__(self, in_channels=64, out_channels=64, base_width=64):
-        super().__init__()
-        self.base_width = base_width
-        self.encoder = FeatureEncoder(in_channels, self.base_width)
-        self.decoder = FeatureDecoder(self.base_width, out_channels=out_channels)
-
-    def forward(self, x):
-        b1, b2, b3 = self.encoder(x)
-        output = self.decoder(b1, b2, b3)
-        return output
-
-
 class FeatureEncoder(nn.Module):
     def __init__(self, in_channels, base_width):
         super().__init__()
@@ -417,6 +402,21 @@ class FeatureDecoder(nn.Module):
 
         out = self.fin_out(db3)
         return out
+
+
+class SubspaceRestrictionNetwork(nn.Module):
+    """Subspace restriction network from DSR."""
+    
+    def __init__(self, in_channels=64, out_channels=64, base_width=64):
+        super().__init__()
+        self.base_width = base_width
+        self.encoder = FeatureEncoder(in_channels, self.base_width)
+        self.decoder = FeatureDecoder(self.base_width, out_channels=out_channels)
+
+    def forward(self, x):
+        b1, b2, b3 = self.encoder(x)
+        output = self.decoder(b1, b2, b3)
+        return output
 
 
 class UnetEncoder(nn.Module):
@@ -543,7 +543,7 @@ class UnetModel(nn.Module):
 class AnomalyDetectionModule(nn.Module):
     """Anomaly detection module from DSR."""
     
-    def __init__(self, in_channels=8, base_width=32):  # 8 channels for RGB+D concatenated
+    def __init__(self, in_channels=8, base_width=32):
         super(AnomalyDetectionModule, self).__init__()
         self.unet = UnetModel(in_channels=in_channels, out_channels=2, base_width=base_width)
 
@@ -626,21 +626,6 @@ class Dsr3dModel(nn.Module):
     
     This model extends the 2D DSR approach to work with RGB+Depth data
     for enhanced 3D surface anomaly detection.
-    
-    Args:
-        rgb_channels: Number of RGB input channels (default: 3)
-        depth_channels: Number of depth input channels (default: 1)
-        use_depth_only: Whether to use depth-only mode (default: False)
-        pretrained_vq_model_path: Path to pretrained VQ model
-        latent_anomaly_strength: Strength of synthetic anomalies in latent space
-        upsampling_train_ratio: Ratio for upsampling training
-        num_hiddens: Number of hidden units in the network
-        num_residual_layers: Number of residual layers
-        num_residual_hiddens: Number of residual hidden units
-        num_embeddings: Size of the quantization codebook
-        embedding_dim: Dimension of the quantization embeddings
-        commitment_cost: Commitment cost for VQ loss
-        decay: Decay rate for EMA quantization
     """
     
     def __init__(
@@ -669,7 +654,6 @@ class Dsr3dModel(nn.Module):
         
         # Input channels depend on whether we use depth only or RGB+Depth
         input_channels = depth_channels if use_depth_only else rgb_channels + depth_channels
-        output_channels = input_channels
         
         # Initialize the discrete latent model (VQ-VAE part)
         self.discrete_model = DiscreteLatentModelGroups(
@@ -681,19 +665,22 @@ class Dsr3dModel(nn.Module):
             commitment_cost=commitment_cost,
             decay=decay,
             in_channels=input_channels,
-            out_channels=output_channels
+            out_channels=input_channels
         )
         
         # Object-specific decoder (DSR subspace restriction)
-        self.object_specific_decoder = SubspaceRestrictionNetwork(
-            in_channels=embedding_dim,
-            out_channels=output_channels,
-            base_width=embedding_dim//2
+        self.object_specific_decoder = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            SubspaceRestrictionNetwork(
+                in_channels=embedding_dim,
+                out_channels=input_channels,
+                base_width=embedding_dim//2
+            )
         )
         
         # Anomaly detection module
         self.anomaly_detection_module = AnomalyDetectionModule(
-            in_channels=output_channels * 2,  # Concatenated real + reconstructed
+            in_channels=input_channels * 2,  # Concatenated real + reconstructed
             base_width=32
         )
         
@@ -720,11 +707,9 @@ class Dsr3dModel(nn.Module):
                 pretrained_weights = pickle.load(f)
             
             # Load the pretrained weights into the discrete model
-            # Note: This would need to be adapted based on the exact format of the .pckl files
             if hasattr(pretrained_weights, 'state_dict'):
                 self.discrete_model.load_state_dict(pretrained_weights.state_dict(), strict=False)
             else:
-                # Handle different formats of pretrained weights
                 print(f"Loaded pretrained VQ model from {model_path}")
                 
         except Exception as e:
@@ -780,34 +765,64 @@ class Dsr3dModel(nn.Module):
         
         return synthetic_anomalies
     
-    def forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Forward pass of 3DSR model.
+    def forward(self, batch) -> Dict[str, torch.Tensor]:
+        """Forward pass of 3DSR model."""
+        # Handle both dict and anomalib Batch objects
+        if hasattr(batch, 'image'):
+            # Anomalib Batch object
+            rgb_data = batch.image
+            depth_data = getattr(batch, 'depth', None)
+        else:
+            # Dictionary format
+            rgb_data = batch["image"]
+            depth_data = batch.get("depth", None)
         
-        Args:
-            batch: Input batch containing 'image' and optionally 'depth'
-            
-        Returns:
-            Dictionary containing predictions and intermediate outputs
-        """
         # Extract and prepare input data
         if self.use_depth_only:
             # Use only depth information
-            input_data = batch.get("depth", batch["image"][:, :1])  # Take first channel as depth
+            if depth_data is not None:
+                input_data = depth_data
+            else:
+                # Fallback: use first channel of image as depth
+                input_data = rgb_data[:, :1]
         else:
             # Concatenate RGB and depth
-            rgb_data = batch["image"]
-            if "depth" in batch:
-                depth_data = batch["depth"]
+            if depth_data is not None:
+                # Depth + RGB concatenation
+                input_data = torch.cat([depth_data, rgb_data], dim=1)
             else:
-                # If no depth channel, create dummy depth or extract from image
-                depth_data = torch.zeros_like(rgb_data[:, :1])
-            input_data = torch.cat([depth_data, rgb_data], dim=1)  # Depth first, then RGB
+                # If no depth channel, handle different RGB formats
+                if rgb_data.shape[1] == 4:
+                    # RGBD format - split into RGB and D
+                    depth_data = rgb_data[:, :1]  # First channel as depth
+                    rgb_data = rgb_data[:, 1:]    # Remaining channels as RGB
+                    input_data = torch.cat([depth_data, rgb_data], dim=1)
+                elif rgb_data.shape[1] == 3:
+                    # RGB only - create dummy depth channel
+                    depth_data = torch.zeros_like(rgb_data[:, :1])
+                    input_data = torch.cat([depth_data, rgb_data], dim=1)
+                else:
+                    # Single channel or other format
+                    input_data = rgb_data
         
         # Phase 1: VQ-VAE processing
         loss_b, loss_t, general_reconstruction, quantized_t, quantized_b = self.discrete_model(input_data)
         
         # Object-specific reconstruction through subspace restriction
         object_specific_reconstruction = self.object_specific_decoder(quantized_b)
+        
+        # Ensure all reconstructions match input size
+        target_size = input_data.shape[-2:]
+        
+        if general_reconstruction.shape[-2:] != target_size:
+            general_reconstruction = F.interpolate(
+                general_reconstruction, size=target_size, mode='bilinear', align_corners=False
+            )
+            
+        if object_specific_reconstruction.shape[-2:] != target_size:
+            object_specific_reconstruction = F.interpolate(
+                object_specific_reconstruction, size=target_size, mode='bilinear', align_corners=False
+            )
         
         outputs = {
             "general_reconstruction": general_reconstruction,
@@ -824,6 +839,12 @@ class Dsr3dModel(nn.Module):
             if self.training:
                 synthetic_quantized = self.generate_synthetic_anomalies(quantized_b)
                 synthetic_reconstruction = self.object_specific_decoder(synthetic_quantized)
+                
+                # Ensure size matching
+                if synthetic_reconstruction.shape[-2:] != target_size:
+                    synthetic_reconstruction = F.interpolate(
+                        synthetic_reconstruction, size=target_size, mode='bilinear', align_corners=False
+                    )
                 
                 # Anomaly detection on synthetic data
                 anomaly_logits = self.anomaly_detection_module(
@@ -851,8 +872,18 @@ class Dsr3dModel(nn.Module):
                 outputs["pred_score"] = torch.max(anomaly_map.view(anomaly_map.size(0), -1), dim=1)[0]
         else:
             # Phase 1: No anomaly detection yet, use reconstruction error
+            if object_specific_reconstruction.shape[-2:] != input_data.shape[-2:]:
+                object_specific_reconstruction_resized = F.interpolate(
+                    object_specific_reconstruction,
+                    size=input_data.shape[-2:],
+                    mode='bilinear',
+                    align_corners=False
+                )
+            else:
+                object_specific_reconstruction_resized = object_specific_reconstruction
+                
             reconstruction_error = F.mse_loss(
-                object_specific_reconstruction, 
+                object_specific_reconstruction_resized, 
                 input_data, 
                 reduction='none'
             ).mean(dim=1, keepdim=True)
