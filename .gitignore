@@ -6,6 +6,8 @@ json/
 results/
 runs/
 scores/
+models_base/
+
 
 #Files
 *.json
