@@ -21,7 +21,26 @@ __all__ = ["Dsr3d"]
 
 
 class Dsr3d(AnomalibModule):
-    """3DSR Lightning Module for 3D Surface Anomaly Detection."""
+    """3DSR Lightning Module for 3D Surface Anomaly Detection.
+    
+    Args:
+        rgb_channels: Number of RGB input channels
+        depth_channels: Number of depth input channels  
+        use_depth_only: Whether to use depth-only mode
+        pretrained_vq_model_path: Path to pretrained VQ model
+        latent_anomaly_strength: Strength of synthetic anomalies
+        upsampling_train_ratio: Ratio for upsampling training
+        num_hiddens: Number of hidden units in VQ-VAE
+        num_residual_layers: Number of residual layers
+        num_residual_hiddens: Number of residual hidden units
+        num_embeddings: Size of quantization codebook
+        embedding_dim: Dimension of quantization embeddings
+        commitment_cost: Commitment cost for VQ loss
+        decay: Decay rate for EMA quantization
+        training_phase: Current training phase (1, 2, or 3)
+        lr: Learning rate
+        weight_decay: Weight decay for optimizer
+    """
     
     def __init__(
         self,
@@ -73,7 +92,7 @@ class Dsr3d(AnomalibModule):
         self.phase_1_epochs = 40  # VQ-VAE + Reconstruction (reduced due to pretrained VQ)
         self.phase_2_epochs = 50  # Anomaly Detection (most important phase)
         self.phase_3_epochs = 30  # Upsampling (fine-tuning)
-
+        
     @property
     def learning_type(self) -> LearningType:
         """Return the learning type of the model."""
@@ -85,7 +104,7 @@ class Dsr3d(AnomalibModule):
         # 3DSR specific training arguments
         total_epochs = self.phase_1_epochs + self.phase_2_epochs + self.phase_3_epochs
         return {"max_epochs": total_epochs}
-        
+
     def set_training_phase(self, phase: int) -> None:
         """Set the training phase and update model accordingly."""
         self.model.set_training_phase(phase)
@@ -135,7 +154,15 @@ class Dsr3d(AnomalibModule):
             self.trainer.optimizers = [self.configure_optimizers()]
     
     def training_step(self, batch, batch_idx: int) -> STEP_OUTPUT:
-        """Training step for 3DSR."""
+        """Training step for 3DSR.
+        
+        Args:
+            batch: Input batch
+            batch_idx: Batch index
+            
+        Returns:
+            Loss value
+        """
         outputs = self.model(batch)
         
         # Calculate loss based on training phase
@@ -161,7 +188,15 @@ class Dsr3d(AnomalibModule):
         return loss
     
     def validation_step(self, batch, batch_idx: int) -> STEP_OUTPUT:
-        """Validation step for 3DSR."""
+        """Validation step for 3DSR.
+        
+        Args:
+            batch: Input batch
+            batch_idx: Batch index
+            
+        Returns:
+            Batch with predictions
+        """
         outputs = self.model(batch)
         batch.update(outputs)
         
@@ -177,42 +212,30 @@ class Dsr3d(AnomalibModule):
         return batch
     
     def test_step(self, batch, batch_idx: int) -> STEP_OUTPUT:
-        """Test step for 3DSR."""
+        """Test step for 3DSR.
+        
+        Args:
+            batch: Input batch
+            batch_idx: Batch index
+            
+        Returns:
+            Batch with predictions
+        """
         outputs = self.model(batch)
-        
-        # Debug: Check what outputs we have
-        print(f"DEBUG: Test step outputs keys: {list(outputs.keys())}")
-        if "pred_score" in outputs:
-            print(f"DEBUG: pred_score shape: {outputs['pred_score'].shape}")
-        else:
-            print("DEBUG: pred_score missing from outputs!")
-        
-        # Ensure all required fields are present
-        if "pred_score" not in outputs:
-            # Fallback: calculate pred_score from anomaly_map if missing
-            if "anomaly_map" in outputs:
-                outputs["pred_score"] = torch.max(
-                    outputs["anomaly_map"].view(outputs["anomaly_map"].size(0), -1), 
-                    dim=1
-                )[0]
-                print(f"DEBUG: Generated pred_score from anomaly_map: {outputs['pred_score'].shape}")
-            else:
-                # Last resort: use zeros
-                batch_size = batch.image.shape[0] if hasattr(batch, 'image') else batch["image"].shape[0]
-                outputs["pred_score"] = torch.zeros(batch_size, device=next(iter(outputs.values())).device)
-                print(f"DEBUG: Generated zero pred_score: {outputs['pred_score'].shape}")
-        
-        # Update batch with outputs for evaluation
-        if hasattr(batch, 'update'):
-            batch.update(outputs)
-        else:
-            # If batch is a dict
-            batch.update(outputs)
+        batch.update(outputs)
         
         return batch
     
     def predict_step(self, batch, batch_idx: int) -> STEP_OUTPUT:
-        """Prediction step for 3DSR."""
+        """Prediction step for 3DSR.
+        
+        Args:
+            batch: Input batch
+            batch_idx: Batch index
+            
+        Returns:
+            Batch with predictions
+        """
         outputs = self.model(batch)
         batch.update(outputs)
         
@@ -227,3 +250,6 @@ class Dsr3d(AnomalibModule):
         """Called at the end of each training epoch."""
         # Log training progress
         logger.info(f"Training epoch {self.current_epoch} completed in phase {self.current_phase}")
+        
+        # You can add custom logic here for phase transitions based on validation metrics
+        # instead of fixed epoch counts if needed

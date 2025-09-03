@@ -5,6 +5,7 @@ from datetime import datetime
 from anomalib.engine import Engine
 from models.dsr3d import Dsr3d
 from adam3d.adam_3d_datamodule import ADAM3D
+from anomalib.data.utils import TestSplitMode, ValSplitMode
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -36,7 +37,10 @@ def run_anomalib(dataset_base_dir: str, log_file_path: str):
             train_batch_size=32,
             eval_batch_size=32,
             num_workers=8,
+            test_split_mode=TestSplitMode.FROM_DIR,
         )
+
+        #datamodule.predict_dataloader()
 
         model = Dsr3d(
             #image_size=(1024, 1280),  # Explicitly set in model
