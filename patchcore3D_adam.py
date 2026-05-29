@@ -1,5 +1,6 @@
 from anomalib.engine import Engine
 from anomalib.models import Patchcore
+from anomalib.visualization import ImageVisualizer
 from adam3d.adam_3d_datamodule import ADAM3D
 import os
 import json
@@ -30,7 +31,10 @@ def run_anomalib(dataset_base_dir: str, log_file_path: str):
             num_workers=8,
         )
 
-        model = Patchcore()
+        visualizer = ImageVisualizer(
+            fields_config={"anomaly_map": {"normalize": True}}
+        )
+        model = Patchcore(visualizer=visualizer)
         engine = Engine()
 
         engine.fit(datamodule=datamodule, model=model)
@@ -51,6 +55,6 @@ def run_anomalib(dataset_base_dir: str, log_file_path: str):
     print(f"\nAll categories processed. Results written to {log_file_path}")
 
 if __name__ == '__main__':
-    dataset_base_dir = "D:\\Data\\3d-adam-tests\\adam3d_unsupervised"  # Adjust this path as needed
+    dataset_base_dir = "D:\\Data\\3d-adam-tests\\adam3d_cropped"  # Adjust this path as needed
     log_file_path= "scores\\patchcore_adam3D_test_results.json"
     run_anomalib(dataset_base_dir, log_file_path)

@@ -5,6 +5,17 @@ from anomalib.engine import Engine
 from anomalib.models import Dinomaly
 from anomalib.data import Folder
 
+ignore_categories = [
+    "baseclampbody",
+    "baseclampbolt",
+    "gripper_open",
+    "gripper_closed",
+    "t2m1bd",
+    "t2m1bi",
+    "t3m1c",
+    "t4m1e",
+]
+
 def run_anomalib_on_dataset(dataset_base_dir: str, log_file_path: str):
     """
     Iterates through all categories in a dataset and runs the anomalib
@@ -26,8 +37,8 @@ def run_anomalib_on_dataset(dataset_base_dir: str, log_file_path: str):
 
     # Iterate through each category
     for category in categories:
-        #if category in ignore_categories:
-        #    continue
+        if category in ignore_categories:
+            continue
         print(f"--- Processing category: {category} ---")
         
         # Construct the full path to the current category
@@ -77,7 +88,7 @@ def run_anomalib_on_dataset(dataset_base_dir: str, log_file_path: str):
 
 
 if __name__ == '__main__':
-    dataset_base_dir = "D:\\Data\\3d-adam-tests\\3d-adam-nano-2d"
-    log_file_path = "anomalib_test_results.json"
+    dataset_base_dir = "datasets/adam3d_unsupervised"
+    log_file_path = "anomalib_dinomaly_test_results_adam3d_masked.json"
     run_anomalib_on_dataset(dataset_base_dir, log_file_path)
     

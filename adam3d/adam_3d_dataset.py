@@ -152,7 +152,6 @@ def make_adam_3d_dataset(
         columns=["path", "split", "label", "type", "file_name"],
     )
 
-    print(samples.path + "/" + samples.split + "/" + samples.label + "/" + "rgb/" + samples.file_name)
     # Modify image_path column by converting to absolute path
     samples.loc[(samples.type == "rgb"), "image_path"] = (
         samples.path + "/" + samples.split + "/" + samples.label + "/" + "rgb/" + samples.file_name
